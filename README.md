@@ -95,7 +95,7 @@ The four services are frontend `localhost:3000`, backend `localhost:8000`, MySQL
 - Frontend: `http://localhost:3000`
 - MySQL-backed health and actual item count: `http://localhost:8000/health`
 - MySQL + Redis readiness: `http://localhost:8000/ready`
-- Swagger UI: `http://localhost:8000/docs`
+- Swagger UI: `http://localhost:8000/docs` 
 
 Read API includes item search/category/location/status filters, pagination and sorting, item detail/reviews, categories, locations, public owner profiles, category statistics and overdue analytics. Protected routes include registration/login/profile, item management, borrowing requests, owner decisions, handover/return, participant reviews, borrowing history, request-linked messaging and admin statistics.
 
@@ -155,5 +155,5 @@ Backend tests use mocked SQL and in-memory fakeredis so they never write to the 
 ## Admin account
 
 Seeded sample password hashes are placeholders. Register a real account, then have a trusted DBA promote exactly that user in Workbench. There is no public admin promotion route. Keep user/team contribution records and instructor-specific submission details in your final course report.
-#   B o r r o w e r N e a r  
+#  BorrowNear 
  
