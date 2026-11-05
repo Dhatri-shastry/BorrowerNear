@@ -1,6 +1,7 @@
 .env
 .venv/
 venv/
+backend/data/item_images/
 __pycache__/
 *.py[cod]
 .pytest_cache/

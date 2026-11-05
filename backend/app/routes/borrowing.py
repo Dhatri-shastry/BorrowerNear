@@ -1,9 +1,9 @@
-from datetime import date
+from datetime import date, datetime, timedelta, timezone
 from fastapi import APIRouter, Depends, HTTPException, Query
 from mysql.connector import IntegrityError
 
 from app.db import cursor
-from app.dependencies import get_current_user, require_admin
+from app.dependencies import require_borrower, require_lender, require_member, require_admin
 from app.schemas.models import RequestIn, DecisionIn, HandoverIn, ReturnIn, ReviewIn
 from app.redis_store import invalidate_item_caches_safely
 
@@ -11,9 +11,11 @@ router = APIRouter()
 
 
 @router.post("/requests", status_code=201)
-def create_request(data: RequestIn, user=Depends(get_current_user)):
+def create_request(data: RequestIn, user=Depends(require_borrower)):
+    today=datetime.now(timezone(timedelta(hours=5,minutes=30))).date()
+    if data.start_date < today: raise HTTPException(422, "start_date cannot be in the past")
+    if data.end_date < today: raise HTTPException(422, "end_date cannot be in the past")
     if data.end_date <= data.start_date: raise HTTPException(422, "end_date must be after start_date")
-    if data.start_date < date.today(): raise HTTPException(422, "start_date cannot be in the past")
     try:
         with cursor() as (conn, cur):
             cur.execute("SELECT owner_id,status FROM items WHERE item_id=%s FOR UPDATE", (data.item_id,)); item=cur.fetchone()
@@ -30,7 +32,7 @@ def create_request(data: RequestIn, user=Depends(get_current_user)):
 
 
 @router.get("/requests")
-def my_requests(user=Depends(get_current_user), limit:int=Query(50,ge=1,le=100), offset:int=Query(0,ge=0)):
+def my_requests(user=Depends(require_borrower), limit:int=Query(50,ge=1,le=100), offset:int=Query(0,ge=0)):
     with cursor() as (_,cur):
         cur.execute("""SELECT r.request_id,r.item_id,i.item_name,i.owner_id,o.name AS owner_name,
           r.start_date,r.end_date,r.request_date,r.status FROM borrow_requests r JOIN items i ON i.item_id=r.item_id
@@ -39,7 +41,7 @@ def my_requests(user=Depends(get_current_user), limit:int=Query(50,ge=1,le=100),
 
 
 @router.get("/owner/requests")
-def incoming_requests(user=Depends(get_current_user), limit:int=Query(50,ge=1,le=100), offset:int=Query(0,ge=0)):
+def incoming_requests(user=Depends(require_lender), limit:int=Query(50,ge=1,le=100), offset:int=Query(0,ge=0)):
     with cursor() as (_,cur):
         cur.execute("""SELECT r.request_id,r.item_id,i.item_name,r.borrower_id,b.name AS borrower_name,
           r.start_date,r.end_date,r.request_date,r.status FROM borrow_requests r JOIN items i ON i.item_id=r.item_id
@@ -48,7 +50,7 @@ def incoming_requests(user=Depends(get_current_user), limit:int=Query(50,ge=1,le
 
 
 @router.patch("/requests/{request_id}")
-def decide_request(request_id:int, data:DecisionIn, user=Depends(get_current_user)):
+def decide_request(request_id:int, data:DecisionIn, user=Depends(require_lender)):
     with cursor() as (conn,cur):
         cur.execute("SELECT r.*,i.owner_id,i.status AS item_status FROM borrow_requests r JOIN items i ON i.item_id=r.item_id WHERE r.request_id=%s FOR UPDATE",(request_id,)); r=cur.fetchone()
         if not r: raise HTTPException(404,"Request not found")
@@ -67,7 +69,7 @@ def decide_request(request_id:int, data:DecisionIn, user=Depends(get_current_use
 
 
 @router.post("/requests/{request_id}/cancel")
-def cancel_request(request_id:int,user=Depends(get_current_user)):
+def cancel_request(request_id:int,user=Depends(require_borrower)):
     with cursor() as (conn,cur):
         cur.execute("SELECT r.item_id,r.borrower_id,r.status,i.status AS item_status FROM borrow_requests r JOIN items i ON i.item_id=r.item_id WHERE r.request_id=%s FOR UPDATE",(request_id,)); r=cur.fetchone()
         if not r: raise HTTPException(404,"Request not found")
@@ -84,7 +86,7 @@ def cancel_request(request_id:int,user=Depends(get_current_user)):
 
 
 @router.post("/requests/{request_id}/handover",status_code=201)
-def handover(request_id:int,data:HandoverIn,user=Depends(get_current_user)):
+def handover(request_id:int,data:HandoverIn,user=Depends(require_lender)):
     if data.due_date < data.borrow_date: raise HTTPException(422,"due_date cannot be before borrow_date")
     with cursor() as (conn,cur):
         cur.execute("SELECT r.*,i.owner_id FROM borrow_requests r JOIN items i ON i.item_id=r.item_id WHERE r.request_id=%s FOR UPDATE",(request_id,)); r=cur.fetchone()
@@ -100,7 +102,7 @@ def handover(request_id:int,data:HandoverIn,user=Depends(get_current_user)):
 
 
 @router.post("/transactions/{transaction_id}/return")
-def return_item(transaction_id:int,data:ReturnIn,user=Depends(get_current_user)):
+def return_item(transaction_id:int,data:ReturnIn,user=Depends(require_member)):
     with cursor() as (conn,cur):
         cur.execute("""SELECT t.*,r.borrower_id,i.owner_id,i.item_id FROM borrow_transactions t JOIN borrow_requests r ON r.request_id=t.request_id
           JOIN items i ON i.item_id=r.item_id WHERE t.transaction_id=%s FOR UPDATE""",(transaction_id,)); t=cur.fetchone()
@@ -116,7 +118,7 @@ def return_item(transaction_id:int,data:ReturnIn,user=Depends(get_current_user))
 
 
 @router.post("/transactions/{transaction_id}/reviews",status_code=201)
-def create_review(transaction_id:int,data:ReviewIn,user=Depends(get_current_user)):
+def create_review(transaction_id:int,data:ReviewIn,user=Depends(require_member)):
     try:
         with cursor() as (conn,cur):
             cur.execute("""SELECT t.status,r.borrower_id,i.owner_id FROM borrow_transactions t
@@ -141,7 +143,7 @@ def create_review(transaction_id:int,data:ReviewIn,user=Depends(get_current_user
 
 
 @router.get("/transactions")
-def history(user=Depends(get_current_user),limit:int=Query(50,ge=1,le=100),offset:int=Query(0,ge=0)):
+def history(user=Depends(require_member),limit:int=Query(50,ge=1,le=100),offset:int=Query(0,ge=0)):
     with cursor() as (_,cur):
         cur.execute("""SELECT t.transaction_id,t.status,t.borrow_date,t.due_date,t.return_date,i.item_name,
           o.name AS owner_name,b.name AS borrower_name FROM borrow_transactions t

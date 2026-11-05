@@ -29,3 +29,21 @@ def require_admin(user=Depends(get_current_user)):
     if user["role"] != "ADMIN":
         raise HTTPException(status_code=403, detail="Administrator access required")
     return user
+
+
+def require_lender(user=Depends(get_current_user)):
+    if user["role"] != "LENDER":
+        raise HTTPException(status_code=403, detail="A lender account is required")
+    return user
+
+
+def require_borrower(user=Depends(get_current_user)):
+    if user["role"] != "BORROWER":
+        raise HTTPException(status_code=403, detail="A borrower account is required")
+    return user
+
+
+def require_member(user=Depends(get_current_user)):
+    if user["role"] not in ("LENDER", "BORROWER"):
+        raise HTTPException(status_code=403, detail="A lender or borrower account is required")
+    return user

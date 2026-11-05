@@ -18,6 +18,11 @@ class RegisterIn(InputModel):
     phone: Phone
     password: Password
     location_id: int = Field(gt=0)
+    role: str = Field(default="BORROWER", pattern="^(LENDER|BORROWER)$")
+
+
+class RoleIn(InputModel):
+    role: str = Field(pattern="^(LENDER|BORROWER)$")
 
 
 class LoginIn(InputModel):

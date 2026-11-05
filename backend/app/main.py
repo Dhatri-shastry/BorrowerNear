@@ -96,5 +96,7 @@ def readiness():
 
 @app.exception_handler(MySQLError)
 async def database_error_handler(_: Request, exc: MySQLError):
-    logger.warning("Database request failed (%s): %s", type(exc).__name__, _safe_database_error(exc))
+    logger.warning("Database request failed (%s, errno=%s, sqlstate=%s): %s",
+                   type(exc).__name__, getattr(exc, "errno", "unknown"),
+                   getattr(exc, "sqlstate", None) or "unknown", _safe_database_error(exc))
     return JSONResponse(status_code=503,content={"detail":"Database operation unavailable"})

@@ -11,11 +11,12 @@ export class ApiError extends Error {
 }
 function notifySessionChanged(){if(typeof window!=="undefined")window.dispatchEvent(new Event("borrownear-session-change"));}
 export function token(){if(typeof window==="undefined")return null;return sessionStorage.getItem("borrownear_token");}
+export function sessionUser():{role?:string}|null{if(typeof window==="undefined")return null;try{return JSON.parse(sessionStorage.getItem("borrownear_user")||"null")}catch{return null}}
 export function saveSession(accessToken:string,user:unknown){sessionStorage.setItem("borrownear_token",accessToken);sessionStorage.setItem("borrownear_user",JSON.stringify(user));notifySessionChanged();}
 export function clearSession(){sessionStorage.removeItem("borrownear_token");sessionStorage.removeItem("borrownear_user");notifySessionChanged();}
 export async function api<T>(path:string,options:RequestInit={}):Promise<T>{
   const headers=new Headers(options.headers);headers.set("Accept","application/json");
-  if(options.body)headers.set("Content-Type","application/json");
+  if(options.body&&!(options.body instanceof FormData))headers.set("Content-Type","application/json");
   const auth=token();if(auth)headers.set("Authorization",`Bearer ${auth}`);
   let response:Response;
   try{response=await fetch(`${base}${path}`,{...options,headers,cache:"no-store"});}

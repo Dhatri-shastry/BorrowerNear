@@ -1,16 +1,42 @@
 import logging
+from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, Query, Depends
+from fastapi import APIRouter, HTTPException, Query, Depends, UploadFile, File
 from fastapi.encoders import jsonable_encoder
+from fastapi.responses import FileResponse
 from redis.exceptions import RedisError
 
 from app.db import cursor
-from app.dependencies import get_current_user
+from app.config import get_settings
+from app.dependencies import get_current_user, require_lender, require_admin
 from app.schemas.models import ItemCreate, ItemUpdate
 from app.redis_store import get_cached_items, set_cached_items, item_cache_key, invalidate_item_caches_safely
 
 router = APIRouter()
 logger=logging.getLogger("borrownear.items")
+MAX_ITEM_IMAGE_BYTES = 5 * 1024 * 1024
+IMAGE_TYPES = {"image/jpeg": (".jpg", b"\xff\xd8\xff"), "image/png": (".png", b"\x89PNG\r\n\x1a\n"),
+               "image/webp": (".webp", b"RIFF")}
+DEFAULT_IMAGE_DIR = Path(__file__).resolve().parent.parent / "item_defaults"
+
+
+def _default_image_name(item_name: str, category_name: str) -> str:
+    name=item_name.lower()
+    if "tent" in name: return "tent.svg"
+    if "camera" in name: return "camera.svg"
+    if "drill" in name: return "drill.svg"
+    if "ladder" in name: return "ladder.svg"
+    if "projector" in name: return "projector.svg"
+    if "racket" in name or "badminton" in name: return "racket.svg"
+    if "air fryer" in name: return "air-fryer.svg"
+    if "raspberry" in name or "pi kit" in name: return "electronics.svg"
+    if "book" in name or "clrs" in name or "database system concepts" in name: return "book.svg"
+    category=category_name.lower()
+    if "tool" in category: return "drill.svg"
+    if "sport" in category or "outdoor" in category: return "tent.svg"
+    if "book" in category: return "book.svg"
+    if "kitchen" in category: return "air-fryer.svg"
+    return "electronics.svg"
 
 ITEM_SELECT = """SELECT i.item_id, i.owner_id, o.name AS owner_name,
  c.category_id, c.category_name, i.item_name, i.description,
@@ -72,6 +98,46 @@ def get_item(item_id: int):
     return row
 
 
+@router.get("/items/{item_id}/image")
+def get_item_image(item_id: int):
+    with cursor() as (_, cur):
+        cur.execute("SELECT i.item_name,c.category_name FROM items i JOIN categories c ON c.category_id=i.category_id WHERE i.item_id=%s", (item_id,))
+        item=cur.fetchone()
+    if not item: raise HTTPException(404, "Item not found")
+    image_dir=Path(get_settings().item_image_dir)
+    for suffix, content_type in ((".jpg","image/jpeg"),(".png","image/png"),(".webp","image/webp")):
+        uploaded=image_dir / f"{item_id}{suffix}"
+        if uploaded.is_file():
+            return FileResponse(uploaded, media_type=content_type, headers={"Cache-Control":"no-store"})
+    fallback=DEFAULT_IMAGE_DIR / _default_image_name(item["item_name"],item["category_name"])
+    return FileResponse(fallback, media_type="image/svg+xml", headers={"Cache-Control":"no-store"})
+
+
+@router.post("/items/{item_id}/image", status_code=201)
+async def upload_item_image(item_id: int, image: UploadFile = File(...), user=Depends(require_lender)):
+    content_type=(image.content_type or "").lower()
+    if content_type not in IMAGE_TYPES:
+        raise HTTPException(415,"Use a JPEG, PNG, or WebP image")
+    data=await image.read(MAX_ITEM_IMAGE_BYTES+1)
+    if len(data)>MAX_ITEM_IMAGE_BYTES:
+        raise HTTPException(413,"Image must be 5 MB or smaller")
+    suffix,signature=IMAGE_TYPES[content_type]
+    if not data.startswith(signature) or (content_type=="image/webp" and data[8:12]!=b"WEBP"):
+        raise HTTPException(415,"The uploaded file does not match its image type")
+    with cursor() as (conn,cur):
+        cur.execute("SELECT owner_id FROM items WHERE item_id=%s",(item_id,)); item=cur.fetchone()
+        if not item: raise HTTPException(404,"Item not found")
+        if item["owner_id"]!=user["user_id"]: raise HTTPException(403,"Only the item owner can upload its image")
+    image_dir=Path(get_settings().item_image_dir)
+    image_dir.mkdir(parents=True,exist_ok=True)
+    target=image_dir / f"{item_id}{suffix}"
+    for old_suffix in (".jpg",".png",".webp"):
+        old_image=image_dir / f"{item_id}{old_suffix}"
+        if old_image!=target and old_image.exists(): old_image.unlink()
+    target.write_bytes(data)
+    return {"image_url":f"/api/v1/items/{item_id}/image"}
+
+
 @router.get("/categories")
 def categories():
     with cursor() as (_, cur):
@@ -111,11 +177,11 @@ def user_items(user_id: int, limit: int = Query(20, ge=1, le=100), offset: int =
 
 @router.get("/auth/me")
 def my_profile(user=Depends(get_current_user)):
-    return public_user(user["user_id"])
+    return {**public_user(user["user_id"]), "role": user["role"]}
 
 
 @router.post("/items", status_code=201)
-def create_item(data: ItemCreate, user=Depends(get_current_user)):
+def create_item(data: ItemCreate, user=Depends(require_lender)):
     if data.deposit_amount > data.estimated_value:
         raise HTTPException(422, "deposit_amount cannot exceed estimated_value")
     with cursor() as (conn, cur):
@@ -132,7 +198,7 @@ def create_item(data: ItemCreate, user=Depends(get_current_user)):
 
 
 @router.patch("/items/{item_id}")
-def update_item(item_id: int, data: ItemUpdate, user=Depends(get_current_user)):
+def update_item(item_id: int, data: ItemUpdate, user=Depends(require_lender)):
     changes=data.model_dump(exclude_unset=True)
     if not changes: raise HTTPException(422,"Provide at least one field to update")
     if any(value is None for key,value in changes.items() if key not in {"description","condition"}):
@@ -162,7 +228,7 @@ def update_item(item_id: int, data: ItemUpdate, user=Depends(get_current_user)):
 
 
 @router.delete("/items/{item_id}", status_code=200)
-def deactivate_item(item_id:int,user=Depends(get_current_user)):
+def deactivate_item(item_id:int,user=Depends(require_lender)):
     with cursor() as (conn,cur):
         cur.execute("SELECT owner_id,status FROM items WHERE item_id=%s FOR UPDATE",(item_id,)); item=cur.fetchone()
         if not item: raise HTTPException(404,"Item not found")
@@ -176,7 +242,7 @@ def deactivate_item(item_id:int,user=Depends(get_current_user)):
 
 
 @router.get("/analytics/categories")
-def category_stats():
+def category_stats(user=Depends(require_admin)):
     with cursor() as (_, cur):
         cur.execute("""SELECT c.category_id,c.category_name,COUNT(DISTINCT i.item_id) AS item_count,
           COUNT(DISTINCT r.request_id) AS request_count,
@@ -190,7 +256,7 @@ def category_stats():
 
 
 @router.get("/analytics/overdue")
-def overdue_items():
+def overdue_items(user=Depends(require_admin)):
     with cursor() as (_, cur):
         cur.execute("""SELECT t.transaction_id,i.item_name,o.name AS owner_name,b.name AS borrower_name,
           t.due_date,DATEDIFF(CURRENT_DATE,t.due_date) AS days_overdue

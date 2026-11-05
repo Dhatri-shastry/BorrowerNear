@@ -154,6 +154,16 @@ Backend tests use mocked SQL and in-memory fakeredis so they never write to the 
 
 ## Admin account
 
-Seeded sample password hashes are placeholders. Register a real account, then have a trusted DBA promote exactly that user in Workbench. There is no public admin promotion route. Keep user/team contribution records and instructor-specific submission details in your final course report.
+New accounts choose **Lender** or **Borrower** at registration. Lenders manage their own listings and incoming requests; borrowers browse and request items. The API checks these roles on write operations as well as hiding unrelated dashboard actions. Existing `USER` accounts get a one-time role choice after sign-in, with their account data preserved.
+
+Run `backend/sql/06_role_based_access.sql` once against an existing `borrownear` database before deploying the RBAC backend. Fresh Compose databases include the role values during initialization. Do not run the initialization schema on an existing database.
+
+Admin accounts cannot be created through public registration. Register a separate account, then have a trusted DBA promote that exact account in Workbench:
+
+```sql
+UPDATE borrownear.users SET role='ADMIN' WHERE email='your-admin-email@example.com';
+```
+
+Use `/admin/login` for administrator sign-in. The regular login endpoint rejects admin accounts, and admin analytics endpoints require the ADMIN role. Seeded sample password hashes are placeholders and cannot be used to sign in. Keep user/team contribution records and instructor-specific submission details in your final course report.
 #   B o r r o w e r N e a r  
  

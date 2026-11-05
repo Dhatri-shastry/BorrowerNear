@@ -1,5 +1,6 @@
 import os
 from functools import lru_cache
+from pathlib import Path
 
 from dotenv import load_dotenv
 
@@ -30,6 +31,7 @@ class Settings:
     cors_origins: list[str] = _get_cors_origins()
     redis_url: str = os.getenv("REDIS_URL", "redis://localhost:6379/0")
     cache_ttl_seconds: int = int(os.getenv("CACHE_TTL_SECONDS", "60"))
+    item_image_dir: str = os.getenv("ITEM_IMAGE_DIR", str(Path(__file__).resolve().parents[1] / "data" / "item_images"))
 
 
 @lru_cache

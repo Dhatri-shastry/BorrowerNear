@@ -11,6 +11,7 @@ RUN pip install --no-cache-dir -r requirements.txt \
     && useradd --system --gid appgroup --home-dir /app appuser
 
 COPY backend/app ./app
+RUN mkdir -p /app/data/item_images && chown -R appuser:appgroup /app/data
 USER appuser
 EXPOSE 8000
 HEALTHCHECK --interval=20s --timeout=5s --start-period=20s --retries=5 \

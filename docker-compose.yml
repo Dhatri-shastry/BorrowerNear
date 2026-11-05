@@ -64,6 +64,8 @@ services:
       redis:
         condition: service_healthy
     networks: [borrownear]
+    volumes:
+      - item_images:/app/data/item_images
     healthcheck:
       test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health',timeout=3)"]
       interval: 15s
@@ -92,3 +94,4 @@ networks:
 volumes:
   mysql_data:
   redis_data:
+  item_images:

@@ -35,7 +35,7 @@ CREATE TABLE users (
     phone         VARCHAR(20)  NOT NULL UNIQUE,
     password_hash VARCHAR(255) NOT NULL,   -- never store a plain-text password
     location_id   INT NOT NULL,
-    role          ENUM('USER', 'ADMIN') NOT NULL DEFAULT 'USER',
+    role          ENUM('USER', 'LENDER', 'BORROWER', 'ADMIN') NOT NULL DEFAULT 'USER',
     trust_score   DECIMAL(3,2) NOT NULL DEFAULT 0.00,
     created_at    TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
 
